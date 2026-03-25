@@ -17,6 +17,14 @@ CORS(app)
 @app.route('/connection_token', methods=['POST'])
 def connection_token():
     try:
+        # Debug: check if key is present
+        key = os.getenv('STRIPE_SECRET_KEY')
+        if not key:
+            print("CRITICAL: STRIPE_SECRET_KEY not found in environment!")
+        else:
+            print(f"Using Stripe key: {key[:7]}...")
+            stripe.api_key = key
+
         # Create a ConnectionToken using Stripe SDK
         token = stripe.terminal.ConnectionToken.create()
         # Return the secret in a JSON object as required by the Terminal SDK
