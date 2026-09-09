@@ -24,6 +24,18 @@ This is a local server built with Python and Flask that creates short-lived conn
    ```
    The server will start on `http://0.0.0.0:4242` enabling access from other devices on your local Wi-Fi.
 
+## Register a reader
+
+Open **URL:** `http://localhost:4242/register` (or your deployed host). The browser will prompt for HTTP Basic Auth. Use any username and the `REGISTER_READERS_PASSWORD` from your environment. If that variable is not set, the page returns 503.
+
+Enter the pairing code shown on the terminal. The reader is registered to Stripe location `tml_FoRubQTyJs4cwC`, and the pairing code is used as the device label.
+
+Add this to `.env` for local use:
+
+```
+REGISTER_READERS_PASSWORD=choose-a-strong-password
+```
+
 ## Using The Endpoint
 
 In your mobile app, configure your `Terminal` provider to post to:
