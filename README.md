@@ -49,6 +49,23 @@ The endpoint will return the following JSON on success:
 }
 ```
 
+### Transaction GUID
+
+Before starting a payment on a terminal, request a new transaction GUID:
+
+**URL:** `http://192.168.0.188:4242/transaction_guid` (or your deployed host)
+**Method:** `POST`
+
+No request body is required. Response:
+
+```json
+{
+  "transaction_guid": "550e8400-e29b-41d4-a716-446655440000"
+}
+```
+
+The server does not store this value; keep it on the device for the payment flow.
+
 ### Create Payment Intent
 
 In your mobile app, you can create a PaymentIntent for Terminal by posting to:

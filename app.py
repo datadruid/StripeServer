@@ -1,4 +1,5 @@
 import os
+import uuid
 from functools import wraps
 
 import stripe
@@ -65,6 +66,11 @@ def create_payment_intent():
         })
     except Exception as e:
         return jsonify({'error': str(e)}), 400
+
+
+@app.route('/transaction_guid', methods=['POST'])
+def transaction_guid():
+    return jsonify({'transaction_guid': str(uuid.uuid4())})
 
 
 @app.route('/register', methods=['GET', 'POST'])
