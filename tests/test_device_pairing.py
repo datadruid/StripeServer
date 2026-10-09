@@ -55,25 +55,102 @@ def test_status_forwards_the_bearer_token(monkeypatch):
     assert kwargs['headers']['Authorization'] == 'Bearer token-1'
 
 
-def test_pair_page_posts_code_and_venue_to_frontdoor(monkeypatch):
+class Cookie:
+    def __init__(self, name, value):
+        self.name = name
+        self.value = value
+
+
+def json_response(status, payload, cookies=None):
+    response = MagicMock()
+    response.status_code = status
+    response.json.return_value = payload
+    response.text = str(payload)
+    response.cookies = [Cookie(name, value) for name, value in (cookies or {}).items()]
+    return response
+
+
+def test_pair_page_signs_in_selects_a_venue_and_submits_the_code(monkeypatch, tmp_path):
     monkeypatch.setenv('REGISTER_READERS_PASSWORD', REGISTER_PASSWORD)
     monkeypatch.setenv('FRONT_DOOR_URL', 'https://frontdoor.example')
-    upstream = MagicMock(status_code=200, text='paired', json=lambda: {'ok': True})
-    with patch('app.requests.post', return_value=upstream) as post:
-        client = app.test_client()
-        response = client.post(
+    monkeypatch.setenv('PAIRING_SESSION_PATH', str(tmp_path / 'sessions.sqlite'))
+    script = [
+        json_response(200, {'Token': 'jwt-1'}, {'session': 'created'}),
+        json_response(403, {'Subcode': 1110, 'Description': 'TOTP required'}, {'session': 'pre-2fa'}),
+        json_response(200, {'isLoggedOn': True}, {'session': 'ok'}),
+        json_response(200, {
+            'results': {
+                'items': [
+                    {
+                        'id': 'venue-1',
+                        'primary': {'displayName': 'The Lockhart'},
+                        'organization': {'id': 'org-1', 'displayName': 'TipJAR'},
+                    },
+                    {
+                        'id': 'venue-2',
+                        'primary': {'displayName': 'Other Bar'},
+                        'organization': {'id': 'org-1', 'displayName': 'TipJAR'},
+                    },
+                ],
+            },
+        }),
+        json_response(200, {'ok': True}),
+    ]
+
+    def request(method, url, headers=None, data=None, timeout=None):
+        assert method == 'POST'
+        assert timeout == 30
+        return script.pop(0)
+
+    client = app.test_client()
+    with patch('app.requests.request', side_effect=request) as http:
+        login = client.post(
             '/pair',
-            data={'pairing_code': ' 482913 ', 'venue_id': ' venue-1 '},
+            data={'action': 'login', 'email': 'devin@tipjar.tech', 'password': 'secret'},
+            headers=auth_header(),
+        )
+        assert login.status_code == 200
+        assert b'6-digit code' in login.data
+
+        verify = client.post(
+            '/pair',
+            data={'action': 'totp', 'totp_code': '123456'},
+            headers=auth_header(),
+        )
+        assert verify.status_code == 200
+        assert b'The Lockhart' in verify.data
+        assert b'venue-1' in verify.data
+
+        choose = client.post(
+            '/pair',
+            data={'action': 'venue', 'venue_id': 'venue-1'},
+            headers=auth_header(),
+        )
+        assert choose.status_code == 200
+        assert b'Pairing code' in choose.data
+        assert b'TipJAR' in choose.data
+
+        forged = client.post(
+            '/pair',
+            data={'action': 'pair', 'pairing_code': '482913', 'organizationVenueId': 'venue-2'},
             headers=auth_header(),
         )
 
-    assert response.status_code == 200
-    assert b'482913' in response.data
-    post.assert_called_once_with(
-        'https://frontdoor.example/api/dashboard/entity/device/pair',
-        json={'PairingCode': '482913', 'VenueId': 'venue-1'},
-        timeout=30,
-    )
+    assert forged.status_code == 200
+    assert b'Device paired with The Lockhart using code 482913.' in forged.data
+    pair_call = http.call_args_list[-1]
+    assert pair_call.args[0] == 'POST'
+    assert pair_call.args[1] == 'https://frontdoor.example/api/dashboard/entity/device/pair'
+    assert pair_call.kwargs['headers']['Authorization'] == 'bearer jwt-1'
+    assert 'session=ok' in pair_call.kwargs['headers']['Cookie']
+    assert '"pairingCode": "482913"' in pair_call.kwargs['data']
+    assert '"organizationVenueId": "venue-1"' in pair_call.kwargs['data']
+    assert 'venue-2' not in pair_call.kwargs['data']
+    logon_body = http.call_args_list[1].kwargs['data']
+    assert '"rememberDevice": true' in logon_body
+    assert '"pdId"' in logon_body
+    totp_body = http.call_args_list[2].kwargs['data']
+    assert '"totpCode": "123456"' in totp_body
 
 
 def test_configuration_forwards_the_query_and_bearer_token(monkeypatch):

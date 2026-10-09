@@ -36,13 +36,17 @@
       font-weight: 600;
       margin: 0.8rem 0 0.4rem;
     }
-    input[type="text"] {
+    input[type="text"],
+    input[type="email"],
+    input[type="password"],
+    select {
       width: 100%;
       box-sizing: border-box;
       font-size: 1rem;
       padding: 0.65rem 0.75rem;
       border: 1px solid #c5c9d1;
       border-radius: 6px;
+      background: #fff;
     }
     button {
       margin-top: 1rem;
@@ -72,9 +76,15 @@
 <body>
   <main>
     <h1>Pair a device</h1>
-    <p class="lead">
-      Enter the pairing code shown on the phone and the venue this device should collect for.
-    </p>
+    {% if step == 'login' %}
+    <p class="lead">Sign in to TipJAR. After the device is paired, this login is not used again.</p>
+    {% elif step == 'totp' %}
+    <p class="lead">Enter the 6-digit code sent to your email.</p>
+    {% elif step == 'venue' %}
+    <p class="lead">Choose the venue this device should collect for.</p>
+    {% else %}
+    <p class="lead">Enter the pairing code shown on the phone.</p>
+    {% endif %}
 
     {% if error %}
     <div class="error">{{ error }}</div>
@@ -82,17 +92,46 @@
 
     {% if paired %}
     <div class="result" style="margin-bottom: 1.25rem;">
-      <p class="success">Device paired with {{ paired.venue_id }} using code {{ paired.pairing_code }}.</p>
+      <p class="success">Device paired with {{ paired.venue_name }} using code {{ paired.pairing_code }}.</p>
     </div>
     {% endif %}
 
+    {% if step == 'login' %}
     <form method="post" action="/pair">
+      <input type="hidden" name="action" value="login">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+    {% elif step == 'totp' %}
+    <form method="post" action="/pair">
+      <input type="hidden" name="action" value="totp">
+      <label for="totp_code">Code</label>
+      <input id="totp_code" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code" required>
+      <button type="submit">Verify</button>
+    </form>
+    {% elif step == 'venue' %}
+    <form method="post" action="/pair">
+      <input type="hidden" name="action" value="venue">
+      <label for="venue_id">Venue</label>
+      <select id="venue_id" name="venue_id" required>
+        {% for venue in venues %}
+        <option value="{{ venue.id }}">{{ venue.organization_name }} — {{ venue.name }}</option>
+        {% endfor %}
+      </select>
+      <button type="submit">Continue</button>
+    </form>
+    {% elif step == 'code' %}
+    <form method="post" action="/pair">
+      <input type="hidden" name="action" value="pair">
+      <p class="lead">{{ organization_name }} — {{ venue_name }}</p>
       <label for="pairing_code">Pairing code</label>
       <input id="pairing_code" name="pairing_code" type="text" value="{{ pairing_code }}" autocomplete="off" required>
-      <label for="venue_id">Venue</label>
-      <input id="venue_id" name="venue_id" type="text" value="{{ venue_id }}" autocomplete="off" required>
       <button type="submit">Pair device</button>
     </form>
+    {% endif %}
   </main>
 </body>
 </html>
