@@ -1,5 +1,6 @@
 import os
 import secrets
+import time
 import uuid
 from functools import wraps
 
@@ -10,14 +11,18 @@ from flask import Flask, Response, jsonify, make_response, render_template, requ
 from flask_cors import CORS
 
 from dashboard_pairing import (
+    SESSION_TTL_SECONDS,
     DashboardError,
     PairingSessionStore,
+    capture_trace,
     is_logged_on,
     is_two_factor_challenge,
+    jwt_expiry,
     load_venues,
     log_on_device,
     pair_device as submit_device_pair,
     start_session,
+    token_is_expired,
 )
 
 # Load environment variables from .env file
@@ -160,7 +165,29 @@ def blank_pair_session():
         'organization_venue_id': '',
         'venue_name': '',
         'organization_name': '',
+        'api_log': [],
     }
+
+
+def clear_login(record):
+    record['cookies'] = {}
+    record['jwt'] = None
+    record['email'] = ''
+    record['password'] = ''
+    record['awaiting_totp'] = False
+    record['venues'] = []
+    record['organization_venue_id'] = ''
+    record['venue_name'] = ''
+    record['organization_name'] = ''
+
+
+def session_ttl(record):
+    exp = jwt_expiry(record.get('jwt'))
+    if exp:
+        remaining = exp - int(time.time())
+        if remaining > 0:
+            return remaining
+    return SESSION_TTL_SECONDS
 
 
 def pair_step(record):
@@ -191,6 +218,9 @@ def remember_login(record, status, payload, cookies, email, password):
         raise DashboardError(error_message_from(payload, 'Unable to sign in.'))
     if not is_logged_on(payload):
         raise DashboardError('Unable to verify the sign-in code.')
+    refreshed = payload.get('Token') or payload.get('token')
+    if refreshed:
+        record['jwt'] = refreshed
     record['awaiting_totp'] = False
     record['email'] = ''
     record['password'] = ''
@@ -219,103 +249,110 @@ def pair_page():
     store = pairing_store()
     session_id = request.cookies.get(PAIR_SESSION_COOKIE)
     record = store.load(session_id) if session_id else None
-    created = record is None
-    if created:
+    if record is None:
         session_id = secrets.token_urlsafe(32)
         record = blank_pair_session()
+    if token_is_expired(record.get('jwt')):
+        clear_login(record)
 
     error = None
     paired = None
     pairing_code = ''
 
-    if request.method == 'POST':
-        action = request.form.get('action') or ''
-        try:
-            if action == 'login':
-                email = (request.form.get('email') or '').strip()
-                password = request.form.get('password') or ''
-                if not email or not password:
-                    raise DashboardError('Email and password are required.')
-                record['jwt'], record['cookies'] = start_session(
-                    requests,
-                    front_door_url(),
-                    record.get('cookies') or {},
-                )
-                status, payload, cookies = log_on_device(
-                    requests,
-                    front_door_url(),
-                    record['cookies'],
-                    record['jwt'],
-                    email,
-                    password,
-                    record['pd_id'],
-                )
-                remember_login(record, status, payload, cookies, email, password)
-            elif action == 'totp':
-                code = (request.form.get('totp_code') or '').strip()
-                if not record.get('awaiting_totp') or not record.get('jwt'):
-                    raise DashboardError('Sign in before entering the code.')
-                if len(code) != 6 or not code.isdigit():
-                    raise DashboardError('Enter the 6-digit code.')
-                status, payload, cookies = log_on_device(
-                    requests,
-                    front_door_url(),
-                    record.get('cookies') or {},
-                    record['jwt'],
-                    record.get('email') or '',
-                    record.get('password') or '',
-                    record['pd_id'],
-                    totp_code=code,
-                )
-                remember_login(
-                    record,
-                    status,
-                    payload,
-                    cookies,
-                    record.get('email') or '',
-                    record.get('password') or '',
-                )
-            elif action == 'venue':
-                if not record.get('jwt') or record.get('awaiting_totp'):
-                    raise DashboardError('Sign in before choosing a venue.')
-                venue = selected_venue(record, (request.form.get('venue_id') or '').strip())
-                if venue is None:
-                    raise DashboardError('Choose a venue from the list.')
-                record['organization_venue_id'] = venue['id']
-                record['venue_name'] = venue['name']
-                record['organization_name'] = venue['organization_name']
-            elif action == 'pair':
-                pairing_code = (request.form.get('pairing_code') or '').strip()
-                venue_id = record.get('organization_venue_id') or ''
-                if not record.get('jwt') or not venue_id:
-                    raise DashboardError('Sign in and choose a venue before pairing.')
-                if not pairing_code:
-                    raise DashboardError('Pairing code is required.')
-                submit_device_pair(
-                    requests,
-                    front_door_url(),
-                    record.get('cookies') or {},
-                    record['jwt'],
-                    pairing_code,
-                    venue_id,
-                )
-                paired = {
-                    'pairing_code': pairing_code,
-                    'venue_name': record.get('venue_name') or venue_id,
-                }
-                store.delete(session_id)
-                record = blank_pair_session()
-                session_id = secrets.token_urlsafe(32)
-            else:
-                raise DashboardError('Unable to continue pairing.')
-        except DashboardError as exc:
-            error = str(exc)
-            if action == 'login' and not record.get('awaiting_totp'):
-                record['jwt'] = None
+    with capture_trace() as trace:
+        if request.method == 'POST':
+            action = request.form.get('action') or ''
+            try:
+                if action == 'login':
+                    email = (request.form.get('email') or '').strip()
+                    password = request.form.get('password') or ''
+                    if not email or not password:
+                        raise DashboardError('Email and password are required.')
+                    record['jwt'], record['cookies'] = start_session(
+                        requests,
+                        front_door_url(),
+                        record.get('cookies') or {},
+                    )
+                    status, payload, cookies = log_on_device(
+                        requests,
+                        front_door_url(),
+                        record['cookies'],
+                        record['jwt'],
+                        email,
+                        password,
+                        record['pd_id'],
+                    )
+                    remember_login(record, status, payload, cookies, email, password)
+                elif action == 'totp':
+                    code = (request.form.get('totp_code') or '').strip()
+                    if not record.get('awaiting_totp') or not record.get('jwt'):
+                        raise DashboardError('Sign in before entering the code.')
+                    if len(code) != 6 or not code.isdigit():
+                        raise DashboardError('Enter the 6-digit code.')
+                    status, payload, cookies = log_on_device(
+                        requests,
+                        front_door_url(),
+                        record.get('cookies') or {},
+                        record['jwt'],
+                        record.get('email') or '',
+                        record.get('password') or '',
+                        record['pd_id'],
+                        totp_code=code,
+                    )
+                    remember_login(
+                        record,
+                        status,
+                        payload,
+                        cookies,
+                        record.get('email') or '',
+                        record.get('password') or '',
+                    )
+                elif action == 'change_venue':
+                    if not record.get('jwt') or record.get('awaiting_totp'):
+                        raise DashboardError('Sign in before choosing a venue.')
+                    record['organization_venue_id'] = ''
+                    record['venue_name'] = ''
+                    record['organization_name'] = ''
+                elif action == 'venue':
+                    if not record.get('jwt') or record.get('awaiting_totp'):
+                        raise DashboardError('Sign in before choosing a venue.')
+                    venue = selected_venue(record, (request.form.get('venue_id') or '').strip())
+                    if venue is None:
+                        raise DashboardError('Choose a venue from the list.')
+                    record['organization_venue_id'] = venue['id']
+                    record['venue_name'] = venue['name']
+                    record['organization_name'] = venue['organization_name']
+                elif action == 'pair':
+                    pairing_code = (request.form.get('pairing_code') or '').strip()
+                    venue_id = record.get('organization_venue_id') or ''
+                    if not record.get('jwt') or not venue_id:
+                        raise DashboardError('Sign in and choose a venue before pairing.')
+                    if not pairing_code:
+                        raise DashboardError('Pairing code is required.')
+                    submit_device_pair(
+                        requests,
+                        front_door_url(),
+                        record.get('cookies') or {},
+                        record['jwt'],
+                        pairing_code,
+                        venue_id,
+                    )
+                    paired = {
+                        'pairing_code': pairing_code,
+                        'venue_name': record.get('venue_name') or venue_id,
+                    }
+                    pairing_code = ''
+                else:
+                    raise DashboardError('Unable to continue pairing.')
+            except DashboardError as exc:
+                error = str(exc)
+                if action == 'login' and not record.get('awaiting_totp'):
+                    record['jwt'] = None
                 record['password'] = ''
 
-    if not paired:
-        store.save(session_id, record)
+    record['api_log'] = (record.get('api_log') or []) + trace
+    record['api_log'] = record['api_log'][-20:]
+    store.save(session_id, record, session_ttl(record))
 
     response = make_response(render_template(
         'pair.html',
@@ -326,6 +363,8 @@ def pair_page():
         pairing_code=pairing_code,
         venue_name=record.get('venue_name') or '',
         organization_name=record.get('organization_name') or '',
+        bearer_token=record.get('jwt') or '',
+        api_log=record.get('api_log') or [],
     ))
     response.set_cookie(
         PAIR_SESSION_COOKIE,

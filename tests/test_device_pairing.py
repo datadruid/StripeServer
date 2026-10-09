@@ -1,7 +1,10 @@
 import base64
+import json
+import time
 from unittest.mock import MagicMock, patch
 
 from app import app
+from dashboard_pairing import PairingSessionStore
 
 app.config['TESTING'] = True
 
@@ -95,6 +98,7 @@ def test_pair_page_signs_in_selects_a_venue_and_submits_the_code(monkeypatch, tm
             },
         }),
         json_response(200, {'ok': True}),
+        json_response(200, {'ok': True}),
     ]
 
     def request(method, url, headers=None, data=None, timeout=None):
@@ -111,6 +115,9 @@ def test_pair_page_signs_in_selects_a_venue_and_submits_the_code(monkeypatch, tm
         )
         assert login.status_code == 200
         assert b'6-digit code' in login.data
+        assert b'jwt-1' in login.data
+        assert b'/api/security/logon/device' in login.data
+        assert b'secret' not in login.data
 
         verify = client.post(
             '/pair',
@@ -135,10 +142,24 @@ def test_pair_page_signs_in_selects_a_venue_and_submits_the_code(monkeypatch, tm
             data={'action': 'pair', 'pairing_code': '482913', 'organizationVenueId': 'venue-2'},
             headers=auth_header(),
         )
+        assert forged.status_code == 200
+        assert b'Device paired with The Lockhart using code 482913.' in forged.data
+        assert b'jwt-1' in forged.data
+        assert b'/api/dashboard/entity/device/pair' in forged.data
+        assert b'Pairing code' in forged.data
 
-    assert forged.status_code == 200
-    assert b'Device paired with The Lockhart using code 482913.' in forged.data
-    pair_call = http.call_args_list[-1]
+        again = client.post(
+            '/pair',
+            data={'action': 'pair', 'pairing_code': '999111'},
+            headers=auth_header(),
+        )
+
+    assert again.status_code == 200
+    assert b'Device paired with The Lockhart using code 999111.' in again.data
+    urls = [call.args[1] for call in http.call_args_list]
+    assert urls.count('https://frontdoor.example/api/security/sessioncreate') == 1
+    assert urls[-1] == 'https://frontdoor.example/api/dashboard/entity/device/pair'
+    pair_call = http.call_args_list[-2]
     assert pair_call.args[0] == 'POST'
     assert pair_call.args[1] == 'https://frontdoor.example/api/dashboard/entity/device/pair'
     assert pair_call.kwargs['headers']['Authorization'] == 'bearer jwt-1'
@@ -171,6 +192,38 @@ def test_configuration_forwards_the_query_and_bearer_token(monkeypatch):
     args, kwargs = request.call_args
     assert args == ('GET', 'https://partner.example/api/open/device/configuration?partnerId=partner-1&deviceId=device-1')
     assert kwargs['headers']['Authorization'] == 'Bearer token-1'
+
+
+def expired_jwt():
+    segment = base64.urlsafe_b64encode(json.dumps({'exp': int(time.time()) - 60}).encode()).decode().rstrip('=')
+    return f'header.{segment}.sig'
+
+
+def test_expired_bearer_token_returns_to_sign_in(monkeypatch, tmp_path):
+    monkeypatch.setenv('REGISTER_READERS_PASSWORD', REGISTER_PASSWORD)
+    path = tmp_path / 'sessions.sqlite'
+    monkeypatch.setenv('PAIRING_SESSION_PATH', str(path))
+    token = expired_jwt()
+    PairingSessionStore(str(path)).save('sid', {
+        'pd_id': 'pd-1',
+        'cookies': {'session': 'ok'},
+        'jwt': token,
+        'email': '',
+        'password': '',
+        'awaiting_totp': False,
+        'venues': [{'id': 'venue-1', 'name': 'The Lockhart', 'organization_name': 'TipJAR'}],
+        'organization_venue_id': 'venue-1',
+        'venue_name': 'The Lockhart',
+        'organization_name': 'TipJAR',
+        'api_log': [],
+    })
+    client = app.test_client()
+    client.set_cookie('pair_session', 'sid')
+    response = client.get('/pair', headers=auth_header())
+
+    assert response.status_code == 200
+    assert b'Sign in to TipJAR' in response.data
+    assert token.encode() not in response.data
 
 
 def test_pair_page_requires_a_password(monkeypatch):

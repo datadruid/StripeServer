@@ -1,11 +1,14 @@
+import base64
+import contextvars
 import json
 import sqlite3
 import time
-from contextlib import closing
+from contextlib import closing, contextmanager
 
 API_VERSION = '2016-08-01'
 CLIENT_VERSION = '8.0.26121.10'
 SESSION_TTL_SECONDS = 2 * 60 * 60
+_request_trace = contextvars.ContextVar('dashboard_request_trace', default=None)
 
 
 def cookie_header(cookies):
@@ -68,6 +71,69 @@ def read_venues(payload):
     return venues
 
 
+def jwt_expiry(token):
+    if not isinstance(token, str) or token.count('.') != 2:
+        return None
+    segment = token.split('.')[1]
+    padding = '=' * (-len(segment) % 4)
+    try:
+        payload = json.loads(base64.urlsafe_b64decode(segment + padding))
+    except Exception:
+        return None
+    exp = payload.get('exp') if isinstance(payload, dict) else None
+    if isinstance(exp, (int, float)):
+        return int(exp)
+    return None
+
+
+def token_is_expired(token, now=None):
+    exp = jwt_expiry(token)
+    if exp is None:
+        return False
+    if now is None:
+        now = time.time()
+    return exp <= now
+
+
+def redact_body(body):
+    if not isinstance(body, dict):
+        return body
+    redacted = dict(body)
+    if 'password' in redacted:
+        redacted['password'] = '***'
+    return redacted
+
+
+def format_payload(payload, fallback):
+    if isinstance(payload, (dict, list)):
+        return json.dumps(payload, indent=2)
+    return fallback or ''
+
+
+@contextmanager
+def capture_trace():
+    entries = []
+    token = _request_trace.set(entries)
+    try:
+        yield entries
+    finally:
+        _request_trace.reset(token)
+
+
+def record_trace(url, headers, body, status, response):
+    entries = _request_trace.get()
+    if entries is None:
+        return
+    entries.append({
+        'method': 'POST',
+        'url': url,
+        'status': status,
+        'request_headers': headers,
+        'request': json.dumps(redact_body(body), indent=2) if body is not None else '',
+        'response': response,
+    })
+
+
 def front_door_request(http, base_url, path, cookies, authorization=None, body=None):
     headers = {
         'Accept': 'application/json',
@@ -83,20 +149,23 @@ def front_door_request(http, base_url, path, cookies, authorization=None, body=N
         headers['Cookie'] = header
     if authorization:
         headers['Authorization'] = f'bearer {authorization}'
+    url = f'{base_url.rstrip("/")}{path}'
     try:
         response = http.request(
             'POST',
-            f'{base_url.rstrip("/")}{path}',
+            url,
             headers=headers,
             data=data,
             timeout=30,
         )
     except Exception as exc:
+        record_trace(url, headers, body, 'error', str(exc))
         raise DashboardError(str(exc)) from exc
     try:
         payload = response.json()
     except Exception:
         payload = None
+    record_trace(url, headers, body, response.status_code, format_payload(payload, getattr(response, 'text', '')))
     return response.status_code, payload, merge_cookies(cookies, response)
 
 
@@ -203,8 +272,8 @@ class PairingSessionStore:
             return None
         return json.loads(row[0])
 
-    def save(self, session_id, payload):
-        expires_at = int(time.time()) + SESSION_TTL_SECONDS
+    def save(self, session_id, payload, ttl_seconds=SESSION_TTL_SECONDS):
+        expires_at = int(time.time()) + ttl_seconds
         with closing(self._connect()) as connection:
             connection.execute(
                 '''

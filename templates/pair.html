@@ -12,9 +12,9 @@
       color: #1a1a1a;
     }
     main {
-      max-width: 32rem;
+      max-width: 48rem;
       margin: 3rem auto;
-      padding: 0 1.25rem;
+      padding: 0 1.25rem 3rem;
     }
     h1 {
       font-size: 1.5rem;
@@ -70,6 +70,31 @@
       color: #0d6b32;
       border-radius: 6px;
       padding: 0.75rem 1rem;
+    }
+    button.secondary {
+      background: transparent;
+      color: #635bff;
+      padding-left: 0;
+    }
+    .debug {
+      margin-top: 1.5rem;
+    }
+    .debug h2 {
+      font-size: 0.95rem;
+      margin: 0 0 0.5rem;
+    }
+    pre {
+      white-space: pre-wrap;
+      word-break: break-word;
+      background: #111;
+      color: #f4f5f7;
+      padding: 0.75rem;
+      border-radius: 6px;
+      font-size: 0.8rem;
+      line-height: 1.4;
+    }
+    .call {
+      margin: 0 0 0.75rem;
     }
   </style>
 </head>
@@ -131,6 +156,32 @@
       <input id="pairing_code" name="pairing_code" type="text" value="{{ pairing_code }}" autocomplete="off" required>
       <button type="submit">Pair device</button>
     </form>
+    <form method="post" action="/pair">
+      <input type="hidden" name="action" value="change_venue">
+      <button class="secondary" type="submit">Choose a different venue</button>
+    </form>
+    {% endif %}
+
+    {% if bearer_token %}
+    <section class="debug">
+      <h2>Bearer token</h2>
+      <pre id="bearer-token">{{ bearer_token }}</pre>
+    </section>
+    {% endif %}
+
+    {% if api_log %}
+    <section class="debug">
+      <h2>API calls</h2>
+      {% for call in api_log %}
+      <pre class="call">{{ call.method }} {{ call.url }}
+{% for name, value in call.request_headers.items() %}{{ name }}: {{ value }}
+{% endfor %}
+{{ call.request }}
+
+{{ call.status }}
+{{ call.response }}</pre>
+      {% endfor %}
+    </section>
     {% endif %}
   </main>
 </body>
