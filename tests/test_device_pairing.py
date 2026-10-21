@@ -125,52 +125,48 @@ def test_pair_page_signs_in_selects_a_venue_and_submits_the_code(monkeypatch, tm
             headers=auth_header(),
         )
         assert verify.status_code == 200
-        assert b'name="pairing_code"' in verify.data
-        assert b'name="venue_id"' in verify.data
         assert b'The Lockhart' in verify.data
-        assert b'Other Bar' in verify.data
         assert b'venue-1' in verify.data
+
+        choose = client.post(
+            '/pair',
+            data={'action': 'venue', 'venue_id': 'venue-1'},
+            headers=auth_header(),
+        )
+        assert choose.status_code == 200
+        assert b'Pairing code' in choose.data
+        assert b'TipJAR' in choose.data
 
         forged = client.post(
             '/pair',
-            data={'action': 'pair', 'pairing_code': '482913', 'venue_id': 'not-a-venue'},
+            data={'action': 'pair', 'pairing_code': '482913', 'organizationVenueId': 'venue-2'},
             headers=auth_header(),
         )
         assert forged.status_code == 200
-        assert b'Choose a venue from the list.' in forged.data
-        assert b'Device paired' not in forged.data
-
-        paired = client.post(
-            '/pair',
-            data={'action': 'pair', 'pairing_code': '482913', 'venue_id': 'venue-1'},
-            headers=auth_header(),
-        )
-        assert paired.status_code == 200
-        assert b'Device paired with The Lockhart using code 482913.' in paired.data
-        assert b'jwt-1' in paired.data
-        assert b'/api/dashboard/entity/device/pair' in paired.data
+        assert b'Device paired with The Lockhart using code 482913.' in forged.data
+        assert b'jwt-1' in forged.data
+        assert b'/api/dashboard/entity/device/pair' in forged.data
+        assert b'Pairing code' in forged.data
 
         again = client.post(
             '/pair',
-            data={'action': 'pair', 'pairing_code': '999111', 'venue_id': 'venue-2'},
+            data={'action': 'pair', 'pairing_code': '999111'},
             headers=auth_header(),
         )
 
     assert again.status_code == 200
-    assert b'Device paired with Other Bar using code 999111.' in again.data
+    assert b'Device paired with The Lockhart using code 999111.' in again.data
     urls = [call.args[1] for call in http.call_args_list]
     assert urls.count('https://frontdoor.example/api/security/sessioncreate') == 1
-    assert urls.count('https://frontdoor.example/api/dashboard/entity/device/pair') == 2
     assert urls[-1] == 'https://frontdoor.example/api/dashboard/entity/device/pair'
-    first_pair = http.call_args_list[-2]
-    second_pair = http.call_args_list[-1]
-    assert first_pair.args[0] == 'POST'
-    assert first_pair.kwargs['headers']['Authorization'] == 'bearer jwt-1'
-    assert 'session=ok' in first_pair.kwargs['headers']['Cookie']
-    assert '"pairingCode": "482913"' in first_pair.kwargs['data']
-    assert '"organizationVenueId": "venue-1"' in first_pair.kwargs['data']
-    assert '"pairingCode": "999111"' in second_pair.kwargs['data']
-    assert '"organizationVenueId": "venue-2"' in second_pair.kwargs['data']
+    pair_call = http.call_args_list[-2]
+    assert pair_call.args[0] == 'POST'
+    assert pair_call.args[1] == 'https://frontdoor.example/api/dashboard/entity/device/pair'
+    assert pair_call.kwargs['headers']['Authorization'] == 'bearer jwt-1'
+    assert 'session=ok' in pair_call.kwargs['headers']['Cookie']
+    assert '"pairingCode": "482913"' in pair_call.kwargs['data']
+    assert '"organizationVenueId": "venue-1"' in pair_call.kwargs['data']
+    assert 'venue-2' not in pair_call.kwargs['data']
     logon_body = http.call_args_list[1].kwargs['data']
     assert '"rememberDevice": true' in logon_body
     assert '"pdId"' in logon_body

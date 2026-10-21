@@ -195,6 +195,8 @@ def pair_step(record):
         return 'totp'
     if not record.get('jwt'):
         return 'login'
+    if not record.get('organization_venue_id'):
+        return 'venue'
     return 'code'
 
 
@@ -305,13 +307,26 @@ def pair_page():
                         record.get('email') or '',
                         record.get('password') or '',
                     )
-                elif action == 'pair':
-                    pairing_code = (request.form.get('pairing_code') or '').strip()
+                elif action == 'change_venue':
                     if not record.get('jwt') or record.get('awaiting_totp'):
-                        raise DashboardError('Sign in before pairing.')
+                        raise DashboardError('Sign in before choosing a venue.')
+                    record['organization_venue_id'] = ''
+                    record['venue_name'] = ''
+                    record['organization_name'] = ''
+                elif action == 'venue':
+                    if not record.get('jwt') or record.get('awaiting_totp'):
+                        raise DashboardError('Sign in before choosing a venue.')
                     venue = selected_venue(record, (request.form.get('venue_id') or '').strip())
                     if venue is None:
                         raise DashboardError('Choose a venue from the list.')
+                    record['organization_venue_id'] = venue['id']
+                    record['venue_name'] = venue['name']
+                    record['organization_name'] = venue['organization_name']
+                elif action == 'pair':
+                    pairing_code = (request.form.get('pairing_code') or '').strip()
+                    venue_id = record.get('organization_venue_id') or ''
+                    if not record.get('jwt') or not venue_id:
+                        raise DashboardError('Sign in and choose a venue before pairing.')
                     if not pairing_code:
                         raise DashboardError('Pairing code is required.')
                     submit_device_pair(
@@ -320,14 +335,11 @@ def pair_page():
                         record.get('cookies') or {},
                         record['jwt'],
                         pairing_code,
-                        venue['id'],
+                        venue_id,
                     )
-                    record['organization_venue_id'] = venue['id']
-                    record['venue_name'] = venue['name']
-                    record['organization_name'] = venue['organization_name']
                     paired = {
                         'pairing_code': pairing_code,
-                        'venue_name': venue['name'],
+                        'venue_name': record.get('venue_name') or venue_id,
                     }
                     pairing_code = ''
                 else:
@@ -349,7 +361,8 @@ def pair_page():
         step=pair_step(record),
         venues=record.get('venues') or [],
         pairing_code=pairing_code,
-        organization_venue_id=record.get('organization_venue_id') or '',
+        venue_name=record.get('venue_name') or '',
+        organization_name=record.get('organization_name') or '',
         bearer_token=record.get('jwt') or '',
         api_log=record.get('api_log') or [],
     ))
