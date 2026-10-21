@@ -116,7 +116,8 @@ def test_pair_page_signs_in_selects_a_venue_and_submits_the_code(monkeypatch, tm
         assert login.status_code == 200
         assert b'6-digit code' in login.data
         assert b'jwt-1' in login.data
-        assert b'/api/security/logon/device' in login.data
+        assert b'API calls' not in login.data
+        assert b'/api/security/logon/device' not in login.data
         assert b'secret' not in login.data
 
         verify = client.post(
@@ -145,7 +146,7 @@ def test_pair_page_signs_in_selects_a_venue_and_submits_the_code(monkeypatch, tm
         assert forged.status_code == 200
         assert b'Device paired with The Lockhart using code 482913.' in forged.data
         assert b'jwt-1' in forged.data
-        assert b'/api/dashboard/entity/device/pair' in forged.data
+        assert b'/api/dashboard/entity/device/pair' not in forged.data
         assert b'Pairing code' in forged.data
 
         again = client.post(

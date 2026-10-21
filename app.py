@@ -364,7 +364,6 @@ def pair_page():
         venue_name=record.get('venue_name') or '',
         organization_name=record.get('organization_name') or '',
         bearer_token=record.get('jwt') or '',
-        api_log=record.get('api_log') or [],
     ))
     response.set_cookie(
         PAIR_SESSION_COOKIE,

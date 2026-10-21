@@ -93,9 +93,6 @@
       font-size: 0.8rem;
       line-height: 1.4;
     }
-    .call {
-      margin: 0 0 0.75rem;
-    }
   </style>
 </head>
 <body>
@@ -166,21 +163,6 @@
     <section class="debug">
       <h2>Bearer token</h2>
       <pre id="bearer-token">{{ bearer_token }}</pre>
-    </section>
-    {% endif %}
-
-    {% if api_log %}
-    <section class="debug">
-      <h2>API calls</h2>
-      {% for call in api_log %}
-      <pre class="call">{{ call.method }} {{ call.url }}
-{% for name, value in call.request_headers.items() %}{{ name }}: {{ value }}
-{% endfor %}
-{{ call.request }}
-
-{{ call.status }}
-{{ call.response }}</pre>
-      {% endfor %}
     </section>
     {% endif %}
   </main>
