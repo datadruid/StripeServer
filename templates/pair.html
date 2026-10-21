@@ -105,10 +105,8 @@
     <p class="lead">Sign in to TipJAR. After the device is paired, this login is not used again.</p>
     {% elif step == 'totp' %}
     <p class="lead">Enter the 6-digit code sent to your email.</p>
-    {% elif step == 'venue' %}
-    <p class="lead">Choose the venue this device should collect for.</p>
     {% else %}
-    <p class="lead">Enter the pairing code shown on the phone.</p>
+    <p class="lead">Enter the pairing code shown on the phone, then choose the venue this device should collect for.</p>
     {% endif %}
 
     {% if error %}
@@ -137,28 +135,18 @@
       <input id="totp_code" name="totp_code" type="text" inputmode="numeric" autocomplete="one-time-code" required>
       <button type="submit">Verify</button>
     </form>
-    {% elif step == 'venue' %}
-    <form method="post" action="/pair">
-      <input type="hidden" name="action" value="venue">
-      <label for="venue_id">Venue</label>
-      <select id="venue_id" name="venue_id" required>
-        {% for venue in venues %}
-        <option value="{{ venue.id }}">{{ venue.organization_name }} — {{ venue.name }}</option>
-        {% endfor %}
-      </select>
-      <button type="submit">Continue</button>
-    </form>
     {% elif step == 'code' %}
     <form method="post" action="/pair">
       <input type="hidden" name="action" value="pair">
-      <p class="lead">{{ organization_name }} — {{ venue_name }}</p>
       <label for="pairing_code">Pairing code</label>
       <input id="pairing_code" name="pairing_code" type="text" value="{{ pairing_code }}" autocomplete="off" required>
+      <label for="venue_id">Venue</label>
+      <select id="venue_id" name="venue_id" required>
+        {% for venue in venues %}
+        <option value="{{ venue.id }}" {% if venue.id == organization_venue_id %}selected{% endif %}>{{ venue.organization_name }} — {{ venue.name }}</option>
+        {% endfor %}
+      </select>
       <button type="submit">Pair device</button>
-    </form>
-    <form method="post" action="/pair">
-      <input type="hidden" name="action" value="change_venue">
-      <button class="secondary" type="submit">Choose a different venue</button>
     </form>
     {% endif %}
 
